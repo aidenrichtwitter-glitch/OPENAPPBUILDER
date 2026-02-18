@@ -1,0 +1,17 @@
+[project]
+name = "python-template"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+requires-python = ">=3.11"
+dependencies = [
+    "bezier>=2024.6.20",
+    "customtkinter>=5.2.2",
+    "numpy>=2.4.2",
+    "ollama>=0.6.1",
+    "openai>=2.21.0",
+    "pyautogui>=0.9.54",
+    "pyperclip>=1.11.0",
+    "requests>=2.32.5",
+    "scipy>=1.17.0",
+]

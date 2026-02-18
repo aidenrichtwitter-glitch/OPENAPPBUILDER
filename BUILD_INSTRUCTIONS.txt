@@ -1,0 +1,44 @@
+============================================================
+  HOW TO BUILD AppBuilder.exe ON YOUR WINDOWS PC
+============================================================
+
+PREREQUISITES:
+  1. Python 3.11+ installed (python.org)
+  2. Ollama installed and running (ollama.com)
+  3. Your Qwen model pulled: ollama pull qwen2.5:32b-instruct-q5_K_M
+
+STEP 1 - Install dependencies:
+  pip install customtkinter ollama openai pyautogui pyperclip numpy scipy bezier pillow pyinstaller
+
+STEP 2 - Copy all project files to a folder on your PC:
+  main.py
+  views.py
+  handlers.py
+  ai_functions.py
+  browser_automation.py
+  config.py
+  constants.py
+  utils.py
+  build.py
+  (optional: icon.ico for a custom app icon)
+
+STEP 3 - Run the build:
+  cd YourFolder
+  python build.py
+
+STEP 4 - Find your exe:
+  The built app will be in: dist/AppBuilder/AppBuilder.exe
+  Double-click it to run!
+
+NOTES:
+  - The "projects" folder is created next to the .exe automatically
+  - Generated apps are saved in that projects folder
+  - Ollama must be running on your PC for AI features to work
+  - The Grok API key is built into the app (config.py)
+
+OPTIONAL - Custom Icon:
+  Place an icon.ico file in the same folder as build.py
+  before running the build. It will be used as the app icon.
+  You can create one at: https://convertico.com/
+
+============================================================
