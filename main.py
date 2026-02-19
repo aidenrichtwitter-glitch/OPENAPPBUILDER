@@ -13,12 +13,12 @@ from openai import OpenAI
 import subprocess
 import sys
 
-from config import gemini_folder, EXPAND_MODEL, XAI_API_KEY, GROK_MODEL, load_config, save_config, validate_config
+from config import gemini_folder, EXPAND_MODEL, XAI_API_KEY, GROK_MODEL, load_config, save_config, validate_config, LLM_PROVIDERS, get_available_providers
 from browser_automation import get_grok_response_via_browser
-from ai_functions import ping_pong_fix, grok_syntax_rescue
+from ai_functions import ping_pong_fix, grok_syntax_rescue, get_fix_provider
 from constants import *
 from views import (create_top_bar, create_sliding_menu, create_main_view, create_idea_chat_view,
-                   create_logs_view, create_config_view, create_build_view)
+                   create_logs_view, create_config_view, create_build_view, _build_llm_toggle, _highlight_selected)
 from utils import redirect_print_to_log, log, project_log, restart_ollama
 from handlers import (generate_app, write_files, ping_pong_fix_gui, start_launch_thread,
                       launch_app_gui, prepare_pending, commit_pending, undo_changes, start_generate_thread)
@@ -33,6 +33,12 @@ class AppBuilderGUI(ctk.CTk):
         self.geometry("1050x630")
         self.minsize(900, 540)
         self.configure(fg_color=BG_DEEP)
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.iconbitmap(icon_path)
+            except Exception:
+                pass
 
         self.config = load_config()
         self.app_folder = None
@@ -68,6 +74,7 @@ class AppBuilderGUI(ctk.CTk):
 
         self.after(200, lambda: redirect_print_to_log(self))
 
+        self._ollama_ready = threading.Event()
         threading.Thread(target=self.warmup_ollama, daemon=True).start()
         threading.Thread(target=self.load_suggestion_bubbles, daemon=True).start()
 
@@ -94,6 +101,8 @@ class AppBuilderGUI(ctk.CTk):
         except Exception as e:
             err_msg = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] [STARTUP] Qwen warmup failed: {str(e)}"
             self.after(0, lambda msg=err_msg: log(self, msg))
+        finally:
+            self._ollama_ready.set()
 
     def _scan_imports(self, folder):
         import_to_pip = {
@@ -291,7 +300,7 @@ class AppBuilderGUI(ctk.CTk):
             return False, f"Syntax error: {e}"
         return True, "OK"
 
-    def _check_diff_size(self, original_folder, fixed_folder):
+    def _check_diff_size(self, original_folder, fixed_folder, is_cloud=False):
         for fname in os.listdir(fixed_folder):
             if not fname.endswith('.py'):
                 continue
@@ -309,7 +318,13 @@ class AppBuilderGUI(ctk.CTk):
                 diff = list(difflib.unified_diff(orig_lines, fixed_lines))
                 changed = sum(1 for line in diff if line.startswith('+') or line.startswith('-'))
                 ratio = changed / max(len(orig_lines), 1)
-                if ratio > 0.6:
+                if is_cloud:
+                    threshold = 0.95
+                elif len(orig_lines) < 80:
+                    threshold = 0.85
+                else:
+                    threshold = 0.6
+                if ratio > threshold:
                     return False, f"{fname}: {ratio:.0%} changed (too destructive)"
             except Exception:
                 pass
@@ -347,20 +362,25 @@ class AppBuilderGUI(ctk.CTk):
                         self.after(0, self._update_undo_button_state)
                         return
 
-                self.after(0, lambda: project_log(self, "Qwen couldn't fix in 2 rounds → Grok taking over"))
-                self.ping_pong_fix_gui(f"Preview failed with error: {error}. Grok, fix the code so the AppFrame runs perfectly with current CustomTkinter. Output full main.py and requirements.txt.", fixer_choice='2', auto_preview=False)
+                cloud_provider = get_fix_provider(self.selected_provider, self.config)
+                if cloud_provider == "ollama":
+                    cloud_provider = "xai"
+                cloud_name = LLM_PROVIDERS.get(cloud_provider, {}).get("name", cloud_provider)
+                self.after(0, lambda n=cloud_name: project_log(self, f"Qwen couldn't fix in 2 rounds → {n} taking over"))
+                self.after(0, lambda n=cloud_name: self._show_thinking_indicator(f"{n} is fixing the code..."))
+                self.ping_pong_fix_gui(f"Preview failed with error: {error}. Fix the code so the AppFrame runs perfectly with current CustomTkinter. Output full main.py and requirements.txt.", fixer_choice='2', auto_preview=False)
 
                 if self.pending_folder and os.path.exists(self.pending_folder):
                     valid, reason = self._validate_fix(self.pending_folder)
                     if not valid:
-                        self.after(0, lambda r=reason: project_log(self, f"❌ Grok fix rejected (invalid): {r}"))
+                        self.after(0, lambda r=reason: project_log(self, f"❌ Cloud fix rejected (invalid): {r}"))
                         self.after(0, lambda: project_log(self, "⏪ Restoring snapshot..."))
                         self.restore_snapshot()
                         return
 
-                    safe, reason = self._check_diff_size(snapshot_dir, self.pending_folder)
+                    safe, reason = self._check_diff_size(snapshot_dir, self.pending_folder, is_cloud=True)
                     if not safe:
-                        self.after(0, lambda r=reason: project_log(self, f"❌ Grok fix rejected (too destructive): {r}"))
+                        self.after(0, lambda r=reason: project_log(self, f"❌ Cloud fix rejected (too destructive): {r}"))
                         self.after(0, lambda: project_log(self, "⏪ Restoring snapshot..."))
                         self.restore_snapshot()
                         return
@@ -466,23 +486,35 @@ class AppBuilderGUI(ctk.CTk):
         ]
         self.after(0, self.populate_bubbles, fallback)
 
+        self._ollama_ready.wait(timeout=120)
+
         prompt = """Generate exactly 4 exciting modern Python desktop app ideas that MUST use CustomTkinter for the UI.
 Format each as: AppName: One-sentence description (60-100 characters) highlighting a sleek dark glassmorphism UI with neon glow effects.
 Do not mention 'CustomTkinter' in the description text.
 Do not add any introductory text, numbering, or extra lines.
 Output ONLY the 4 formatted lines."""
-        for attempt in range(3):
+        for attempt in range(5):
             try:
-                restart_ollama()
-                time.sleep(5)
                 resp = ollama.chat(model=EXPAND_MODEL, messages=[{"role": "user", "content": prompt}])
-                ideas = [line.strip() for line in resp['message']['content'].strip().split('\n') if line.strip() and ':' in line][:4]
-                if len(ideas) >= 4:
+                raw_lines = resp['message']['content'].strip().split('\n')
+                ideas = []
+                for line in raw_lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    import re
+                    line = re.sub(r'^\d+[\.\)\-]\s*', '', line).strip()
+                    if ':' in line and len(line) > 10:
+                        ideas.append(line)
+                if len(ideas) >= 2:
+                    while len(ideas) < 4:
+                        ideas.append(fallback[len(ideas)])
                     self.after(0, self.populate_bubbles, ideas[:4])
                     return
             except Exception as e:
                 err_msg = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Suggestion attempt {attempt+1} failed: {e}"
                 self.after(0, lambda msg=err_msg: log(self, msg))
+                time.sleep(3)
 
     def use_suggestion(self, text):
         if self.generating: return
@@ -606,10 +638,27 @@ Output ONLY the 4 formatted lines."""
     def toggle_browser(self):
         self.use_browser_for_grok = self.use_browser_var.get()
 
+    def select_llm_provider(self, provider_id):
+        self.selected_provider = provider_id
+        self.config["selected_llm"] = provider_id
+        save_config(self.config)
+        _highlight_selected(self)
+        provider_name = "Hybrid" if provider_id == "hybrid" else LLM_PROVIDERS.get(provider_id, {}).get("name", provider_id)
+        self.after(0, lambda n=provider_name: log(self, f"Switched to {n} mode"))
+
     def save_config_gui(self):
         self.config['vpn_cmd'] = self.vpn_entry.get()
+        llm_keys = self.config.get("llm_keys", {})
+        for pid, entry in self._api_key_entries.items():
+            val = entry.get().strip()
+            if val and val != "•" * len(val):
+                llm_keys[pid] = val
+            elif not val:
+                llm_keys.pop(pid, None)
+        self.config["llm_keys"] = llm_keys
         save_config(self.config)
-        messagebox.showinfo("Saved", "Config updated!")
+        _build_llm_toggle(self)
+        messagebox.showinfo("Saved", "Config updated! Model toggle refreshed.")
 
     def setup_calibration(self):
         pass

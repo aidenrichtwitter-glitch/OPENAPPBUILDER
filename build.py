@@ -17,11 +17,14 @@ def build():
 
     app_name = "AppBuilder"
     icon_flag = []
-    if os.path.exists("icon.ico"):
+    if os.path.exists("app_icon.ico"):
+        icon_flag = ["--icon=app_icon.ico"]
+        print(f"[OK] Using icon: app_icon.ico")
+    elif os.path.exists("icon.ico"):
         icon_flag = ["--icon=icon.ico"]
         print(f"[OK] Using icon: icon.ico")
     else:
-        print("[!] No icon.ico found - using default icon")
+        print("[!] No icon file found - using default icon")
 
     hidden_imports = [
         "customtkinter",

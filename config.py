@@ -9,6 +9,39 @@ FIX_MODEL = "qwen2.5:32b-instruct-q5_K_M"
 VISION_MODEL = "llava"
 GROK_MODEL = "grok-4"
 
+LLM_PROVIDERS = {
+    "ollama": {
+        "name": "Ollama",
+        "local": True,
+        "model": LLM_MODEL,
+        "color": "#22d3ee",
+    },
+    "xai": {
+        "name": "Grok",
+        "base_url": "https://api.x.ai/v1",
+        "model": "grok-4",
+        "color": "#a855f7",
+    },
+    "openai": {
+        "name": "OpenAI",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o",
+        "color": "#4ade80",
+    },
+    "anthropic": {
+        "name": "Claude",
+        "base_url": "https://api.anthropic.com/v1/messages",
+        "model": "claude-sonnet-4-20250514",
+        "color": "#f97316",
+    },
+    "google": {
+        "name": "Gemini",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "model": "gemini-2.5-flash",
+        "color": "#3b82f6",
+    },
+}
+
 BROWSER_CMD_TEMPLATE = 'start chrome --user-data-dir="{profile_path}" https://grok.com/'
 WINDSCRIBE_DOWNLOAD_URL = "https://assets.windscribe.com/desktop/windows/latest/Windscribe.exe"
 WINDSCRIBE_INSTALLER = "Windscribe.exe"
@@ -57,6 +90,27 @@ def get_xai_api_key():
     cfg = load_config()
     if cfg.get("xai_api_key"):
         return cfg["xai_api_key"]
+    llm_keys = cfg.get("llm_keys", {})
+    if llm_keys.get("xai"):
+        return llm_keys["xai"]
     return DEFAULT_XAI_API_KEY
 
 XAI_API_KEY = get_xai_api_key()
+
+def get_available_providers(config):
+    available = ["ollama"]
+    llm_keys = config.get("llm_keys", {})
+    if llm_keys.get("xai") or config.get("xai_api_key") or os.environ.get("XAI_API_KEY"):
+        available.append("xai")
+    elif DEFAULT_XAI_API_KEY:
+        available.append("xai")
+    for provider_id in ["openai", "anthropic", "google"]:
+        if llm_keys.get(provider_id):
+            available.append(provider_id)
+    return available
+
+def get_provider_key(config, provider_id):
+    llm_keys = config.get("llm_keys", {})
+    if provider_id == "xai":
+        return llm_keys.get("xai") or config.get("xai_api_key") or os.environ.get("XAI_API_KEY") or DEFAULT_XAI_API_KEY
+    return llm_keys.get(provider_id, "")

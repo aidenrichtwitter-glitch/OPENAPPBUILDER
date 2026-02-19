@@ -60,8 +60,12 @@ User request: {app_idea}"""
         self.generating_done = True
         progress_thread.join(timeout=1.0)
 
-        self.after(0, lambda: project_log(self, f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Generating code with Grok..."))
-        user_prompt = f"""You are Grok, an expert Python coder. Generate complete code using ONLY CustomTkinter.
+        from ai_functions import generate_code_with_provider, get_generation_provider
+        from config import LLM_PROVIDERS
+        gen_provider = get_generation_provider(getattr(self, 'selected_provider', 'hybrid'), self.config)
+        gen_name = LLM_PROVIDERS.get(gen_provider, {}).get("name", gen_provider)
+        self.after(0, lambda n=gen_name: project_log(self, f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Generating code with {n}..."))
+        user_prompt = f"""You are an expert Python coder. Generate complete code using ONLY CustomTkinter.
 Use EXACTLY this skeleton—fill in the # UI code comment with ALL widgets/logic:
 import customtkinter as ctk
 class AppFrame(ctk.CTkFrame):
@@ -73,12 +77,7 @@ class AppFrame(ctk.CTkFrame):
 Output ONLY the Python code for main.py, no explanations, no markdown.
 Use glassmorphism dark theme with neon accents.
 {expanded_idea}"""
-        if self.use_browser_for_grok:
-            self.raw_text = get_grok_response_via_browser(user_prompt, self.config)
-        else:
-            client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
-            response = client.chat.completions.create(model=GROK_MODEL, messages=[{"role": "user", "content": user_prompt}])
-            self.raw_text = response.choices[0].message.content
+        self.raw_text = generate_code_with_provider(gen_provider, user_prompt, self.config, self.use_browser_for_grok, self.config)
         write_files(self)
         def _finish_generation():
             self.load_project()
@@ -135,12 +134,20 @@ def ping_pong_fix_gui(self, user_feedback="", fixer_choice='1', auto_preview=Tru
                 self.after(0, self.prepare_pending)
                 time.sleep(0.5)
 
-            fixer_name = "Grok" if fixer_choice == '2' else "Qwen"
+            from config import LLM_PROVIDERS
+            selected = getattr(self, 'selected_provider', 'hybrid')
+            if fixer_choice == '2':
+                from ai_functions import get_fix_provider
+                actual = get_fix_provider(selected, self.config)
+                fixer_name = LLM_PROVIDERS.get(actual, {}).get("name", actual)
+            else:
+                fixer_name = "Qwen"
             self.after(0, lambda a=attempt, fn=fixer_name: project_log(self, f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Fix attempt {a}/{max_attempts} ({fn}) → {user_feedback[:80]}"))
             self.after(0, lambda fn=fixer_name, a=attempt: self._show_thinking_indicator(f"{fn} is thinking (attempt {a}/{max_attempts})..."))
 
             success = ping_pong_fix(self.pending_folder, self.error_log, user_feedback,
-                                    use_browser_for_grok=self.use_browser_for_grok, browser_config=self.config, fixer_choice=fixer_choice)
+                                    use_browser_for_grok=self.use_browser_for_grok, browser_config=self.config, fixer_choice=fixer_choice,
+                                    selected_provider=selected, config=self.config)
 
             self.after(0, self._hide_thinking_indicator)
 
@@ -233,8 +240,9 @@ def launch_app_gui(self):
             if "SyntaxError" in output:
                 self.syntax_fail_count += 1
                 if self.syntax_fail_count >= 3:
-                    if messagebox.askyesno("Syntax Rescue", "Call Grok for syntax fix?"):
-                        grok_syntax_rescue(launch_folder, output, self.use_browser_for_grok, self.config)
+                    if messagebox.askyesno("Syntax Rescue", "Call cloud LLM for syntax fix?"):
+                        grok_syntax_rescue(launch_folder, output, self.use_browser_for_grok, self.config,
+                                          selected_provider=getattr(self, 'selected_provider', 'hybrid'), config=self.config)
                         self.syntax_fail_count = 0
             else:
                 self.after(0, lambda: self.ping_pong_fix_gui("Fix the crash/error shown above"))

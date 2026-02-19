@@ -2,6 +2,7 @@ import customtkinter as ctk
 import tkinter.messagebox as messagebox
 
 from constants import *
+from config import LLM_PROVIDERS, get_available_providers
 
 def create_top_bar(self):
     top = ctk.CTkFrame(self, height=52, fg_color=BG_DARKER, corner_radius=0)
@@ -17,11 +18,70 @@ def create_top_bar(self):
 
     badge_frame = ctk.CTkFrame(top, fg_color=BG_GLASS, corner_radius=16,
                                border_width=1, border_color=BORDER_GLOW)
-    badge_frame.pack(side="top", pady=6)
+    badge_frame.pack(side="left", padx=(8, 0), pady=6)
     self.title_label = ctk.CTkLabel(badge_frame, text="Python Desktop App Builder",
                                     font=ctk.CTkFont(size=15, weight="bold"),
                                     text_color=TEXT_TITLE)
     self.title_label.pack(padx=20, pady=4)
+
+    self.llm_toggle_frame = ctk.CTkFrame(top, fg_color="transparent")
+    self.llm_toggle_frame.pack(side="right", padx=(0, 16), pady=6)
+    self._llm_toggle_buttons = {}
+    self.selected_provider = self.config.get("selected_llm", "hybrid")
+    _build_llm_toggle(self)
+
+def _build_llm_toggle(self):
+    for widget in self.llm_toggle_frame.winfo_children():
+        widget.destroy()
+    self._llm_toggle_buttons = {}
+
+    available = get_available_providers(self.config)
+    cloud_providers = [p for p in available if p != "ollama"]
+    show_hybrid = len(available) >= 2 and len(cloud_providers) >= 1
+
+    for provider_id in available:
+        info = LLM_PROVIDERS[provider_id]
+        color = info["color"]
+        btn = ctk.CTkButton(
+            self.llm_toggle_frame, text=info["name"],
+            width=70, height=30,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            corner_radius=15,
+            fg_color=BG_GLASS, text_color=TEXT_DIM,
+            hover_color=BG_GLASS_LIGHT,
+            border_width=2, border_color=BORDER_GLOW,
+            command=lambda pid=provider_id: self.select_llm_provider(pid)
+        )
+        btn.pack(side="left", padx=2)
+        self._llm_toggle_buttons[provider_id] = (btn, color)
+
+    if show_hybrid:
+        btn = ctk.CTkButton(
+            self.llm_toggle_frame, text="Hybrid",
+            width=70, height=30,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            corner_radius=15,
+            fg_color=BG_GLASS, text_color=TEXT_DIM,
+            hover_color=BG_GLASS_LIGHT,
+            border_width=2, border_color=BORDER_GLOW,
+            command=lambda: self.select_llm_provider("hybrid")
+        )
+        btn.pack(side="left", padx=2)
+        self._llm_toggle_buttons["hybrid"] = (btn, ACCENT_PURPLE)
+
+    if self.selected_provider not in self._llm_toggle_buttons:
+        if show_hybrid:
+            self.selected_provider = "hybrid"
+        elif available:
+            self.selected_provider = available[0]
+    _highlight_selected(self)
+
+def _highlight_selected(self):
+    for pid, (btn, color) in self._llm_toggle_buttons.items():
+        if pid == self.selected_provider:
+            btn.configure(fg_color=color, text_color=BG_DARK, border_color=color)
+        else:
+            btn.configure(fg_color=BG_GLASS, text_color=TEXT_DIM, border_color=BORDER_GLOW)
 
 def create_sliding_menu(self):
     self.menu_frame = ctk.CTkFrame(self, width=280, fg_color=BG_DARKER, corner_radius=0,
@@ -180,37 +240,90 @@ def create_config_view(self):
     self.config_view = ctk.CTkFrame(self.content_container, fg_color=BG_CARD,
                                     corner_radius=28, border_width=2,
                                     border_color=BORDER_GLOW)
-    self.config_view.grid_columnconfigure(0, weight=1)
+
+    scroll = ctk.CTkScrollableFrame(self.config_view, fg_color="transparent")
+    scroll.pack(fill="both", expand=True, padx=20, pady=20)
+    scroll.grid_columnconfigure(0, weight=1)
+
+    ctk.CTkLabel(scroll, text="LLM API Keys",
+                 font=ctk.CTkFont(size=20, weight="bold"),
+                 text_color=ACCENT_PURPLE).grid(row=0, column=0, pady=(0, 4), padx=20, sticky="w")
+    ctk.CTkLabel(scroll, text="Add your API keys below. Only providers with keys will appear in the model toggle.",
+                 font=ctk.CTkFont(size=12),
+                 text_color=TEXT_DIM, wraplength=500, justify="left").grid(row=1, column=0, pady=(0, 12), padx=20, sticky="w")
+
+    self._api_key_entries = {}
+    llm_keys = self.config.get("llm_keys", {})
+    row = 2
+    key_providers = [
+        ("xai", "Grok (xAI)", "xai-...", ACCENT_PURPLE),
+        ("openai", "OpenAI (GPT)", "sk-...", ACCENT_GREEN),
+        ("anthropic", "Anthropic (Claude)", "sk-ant-...", "#f97316"),
+        ("google", "Google (Gemini)", "AIza...", ACCENT_BLUE),
+    ]
+    for pid, label, placeholder, color in key_providers:
+        ctk.CTkLabel(scroll, text=f"{label}:",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=color).grid(row=row, column=0, pady=(8, 2), padx=20, sticky="w")
+        row += 1
+        entry = ctk.CTkEntry(scroll, height=40,
+                             font=ctk.CTkFont(size=13), fg_color=BG_ENTRY,
+                             text_color=TEXT_MAIN, placeholder_text=placeholder,
+                             placeholder_text_color=TEXT_DIM,
+                             border_width=2, border_color=BORDER_NEON,
+                             corner_radius=12, show="•")
+        entry.grid(row=row, column=0, pady=(0, 4), padx=20, sticky="ew")
+        existing_key = llm_keys.get(pid, "")
+        if pid == "xai" and not existing_key:
+            existing_key = self.config.get("xai_api_key", "")
+        if existing_key:
+            entry.insert(0, existing_key)
+        self._api_key_entries[pid] = entry
+        row += 1
+
+    sep = ctk.CTkFrame(scroll, height=2, fg_color=BORDER_GLOW)
+    sep.grid(row=row, column=0, sticky="ew", padx=20, pady=16)
+    row += 1
+
+    ctk.CTkLabel(scroll, text="Other Settings",
+                 font=ctk.CTkFont(size=20, weight="bold"),
+                 text_color=ACCENT_CYAN).grid(row=row, column=0, pady=(0, 8), padx=20, sticky="w")
+    row += 1
 
     self.use_browser_var = ctk.BooleanVar(value=self.use_browser_for_grok)
-    ctk.CTkCheckBox(self.config_view, text="Use Browser Automation for Grok",
+    ctk.CTkCheckBox(scroll, text="Use Browser Automation for Grok",
                     variable=self.use_browser_var, command=lambda: self.toggle_browser(),
-                    font=ctk.CTkFont(size=15), text_color=TEXT_MAIN,
+                    font=ctk.CTkFont(size=14), text_color=TEXT_MAIN,
                     fg_color=BG_GLASS, border_color=BORDER_NEON,
-                    corner_radius=6).grid(row=0, column=0, pady=(24, 10), padx=40, sticky="w")
+                    corner_radius=6).grid(row=row, column=0, pady=(0, 8), padx=20, sticky="w")
+    row += 1
 
-    ctk.CTkButton(self.config_view, text="Setup/Calibrate Browser", height=44,
+    ctk.CTkButton(scroll, text="Setup/Calibrate Browser", height=40,
                   fg_color=ACCENT_PURPLE, hover_color=GLOW_PURPLE,
-                  font=ctk.CTkFont(size=15), corner_radius=12,
-                  command=lambda: self.setup_calibration()).grid(row=1, column=0, pady=8, padx=40, sticky="w")
+                  font=ctk.CTkFont(size=14), corner_radius=12,
+                  command=lambda: self.setup_calibration()).grid(row=row, column=0, pady=4, padx=20, sticky="w")
+    row += 1
 
-    ctk.CTkLabel(self.config_view, text="VPN Command:",
-                 font=ctk.CTkFont(size=15),
-                 text_color=ACCENT_CYAN).grid(row=2, column=0, pady=(20, 4), padx=40, sticky="w")
+    ctk.CTkLabel(scroll, text="VPN Command:",
+                 font=ctk.CTkFont(size=14, weight="bold"),
+                 text_color=TEXT_MAIN).grid(row=row, column=0, pady=(12, 2), padx=20, sticky="w")
+    row += 1
 
-    self.vpn_entry = ctk.CTkEntry(self.config_view, width=600, height=44,
-                                  font=ctk.CTkFont(size=14), fg_color=BG_ENTRY,
+    self.vpn_entry = ctk.CTkEntry(scroll, height=40,
+                                  font=ctk.CTkFont(size=13), fg_color=BG_ENTRY,
+                                  text_color=TEXT_MAIN,
                                   border_width=2, border_color=BORDER_NEON,
                                   corner_radius=12)
-    self.vpn_entry.grid(row=3, column=0, pady=4, padx=40, sticky="ew")
+    self.vpn_entry.grid(row=row, column=0, pady=4, padx=20, sticky="ew")
     self.vpn_entry.insert(0, self.config.get('vpn_cmd', ''))
+    row += 1
 
-    ctk.CTkButton(self.config_view, text="Save Config", height=44,
+    ctk.CTkButton(scroll, text="Save Config", height=46,
                   fg_color=ACCENT_GREEN, hover_color=GLOW_GREEN,
                   text_color=BG_DARK,
-                  font=ctk.CTkFont(size=15, weight="bold"),
-                  corner_radius=12,
-                  command=lambda: self.save_config_gui()).grid(row=4, column=0, pady=20, padx=40, sticky="w")
+                  font=ctk.CTkFont(size=16, weight="bold"),
+                  corner_radius=14,
+                  command=lambda: self.save_config_gui()).grid(row=row, column=0, pady=(16, 8), padx=20, sticky="w")
 
 def create_build_view(self):
     self.build_view = ctk.CTkFrame(self.content_container, fg_color=BG_CARD,
@@ -285,4 +398,3 @@ def create_build_view(self):
                                     corner_radius=14,
                                     command=lambda: self.deploy_app())
     self.deploy_btn.grid(row=0, column=3)
-
